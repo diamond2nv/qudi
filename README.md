@@ -1,3 +1,5 @@
+# working update: https://github.com/diamond2nv/qudi/tree/POI_autocatch
+
 # qudi
 Qudi is a suite of tools for operating multi-instrument and multi-computer laboratory experiments.
 Originally built around a confocal fluorescence microscope experiments, it has grown to be a generally applicaple framework for controlling experiments.
