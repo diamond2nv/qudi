@@ -142,6 +142,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
     _modclass = 'hardware'
 
     #Need to communicate with piezo controller to confirm enable or not.
+    _has_is_moving = False
     _has_connect_piezo = False
     _has_move_abs = False
     _has_move_rel = False
@@ -262,7 +263,8 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 if self._has_move_abs and self._has_get_pos:
                     try:
                         self._has_move_rel = pidevice.HasMVR()
-                        self._has_abort = pidevice.HasStopAll()            
+                        self._has_abort = pidevice.HasStopAll()
+                        self._has_is_moving = pidevice.HasIsMoving()            
                         self._has_calibrate = pidevice.HasATZ()
                         self._has_get_velocity = pidevice.HasqVEL()
                         self._has_set_velocity = pidevice.HasVEL()
@@ -291,8 +293,8 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         #TODO add def shutdown(self) to set Votage=0 V for safety.
         #self._set_servo_state(False)
         #If not shutdown, keep servo on to stay on target.
-        pidevice.errcheck = True
         try:
+            pidevice.errcheck = True
             pidevice.CloseConnection()
             self.log.warning("PI Device Close Connection !")
             return 0
@@ -389,9 +391,11 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         #move_rel to target pos()
         if self._has_move_rel:
             try:
+                #self.log.debug("Send MVR to hardware PI before conver: " + str(param_dict))
                 new_param_dict = self._axis_dict_send(param_dict)
+                #self.log.debug("Send MVR to hardware PI actually: :" + str(new_param_dict))
                 pidevice.MVR(new_param_dict)
-                #Send str upper + um: X Y Z
+                #Send str upper + um: 1 2 3
 
                 try:
                     self.on_target()
@@ -402,6 +406,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 self.log.warning("PI GCSError: " + str(GCSError(exc)))
             except:
                 self.log.warning("PI move_rel / MVR failed !")
+                raise
         else:
             self.log.warning('PI MVR Function not yet implemented')
 
@@ -423,13 +428,16 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         # pidevice.MOV or pidevice.MVT is better ?
         if self._has_move_abs:
             try:
+                #self.log.debug("Send MOV to hardware PI before conver: " + str(param_dict))
                 new_param_dict = self._axis_dict_send(param_dict)
+                #self.log.debug("Send MOV to hardware PI actually: " + str(new_param_dict))
                 pidevice.MOV(new_param_dict)
-                #Send str upper + um: X Y Z
+                #Send str upper + um: 1 2 3
             except GCSError as exc:
                 self.log.warning("PI GCSError: " + str(GCSError(exc)))
             except:
                 self.log.warning("PI move_abs failed !")
+                raise
         else:
             self.log.warning('PI MOV Function not yet implemented')
 
@@ -442,14 +450,31 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         """
         # Not pidevice.SystemAbort(): will cause halt or reboot.
         if self._has_abort:
-            try:
-                pidevice.StopAll()
-                pidevice.errcheck = True
-                return 0
-            except GCSError as exc:
-                self.log.error("PI GCSError: " + str(GCSError(exc)))
-                #raise GCSError(exc)
-                return -1
+            if self._has_is_moving:
+                if pidevice.IsMoving:
+                    try:
+                        pidevice.StopAll()
+                        pidevice.errcheck = True
+                        return 0
+                    except GCSError as exc:
+                        self.log.error("PI GCSError: " + str(GCSError(exc)))
+                        return -1
+                    except:
+                        self.log.error("Hardware PI cannot abort move !")
+                        return -1
+                else:
+                    #if not moving, PI stage is stoped already.
+                    return 0
+            else:      
+                try:
+                    pidevice.StopAll()
+                    pidevice.errcheck = True
+                    return 0
+                except GCSError as exc:
+                    self.log.error("PI GCSError: " + str(GCSError(exc)))
+                    #raise GCSError(exc)
+                    #FIXME
+                    return 0
         else:
             self.log.warning('PI System Abort/StopAll Function not yet implemented')
             return 0
@@ -469,13 +494,16 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         param_dict = {}
         if self._has_get_pos:
             try:
-                pidevice.qPOS(param_dict)
+                param_dict=pidevice.qPOS()
+                #FIXME: param_dict=pidevice.qPOS(param_list) : ['1','2','3']
+                #self.log.debug("Hardware get before conver :" + str(param_dict))
                 # axis dict get conversion 
                 param_dict = self._axis_dict_get(param_dict)
+                #self.log.debug("Hardware get :" + str(param_dict))
             except GCSError as exc:
                 self.log.error("PI GCSError: " + str(GCSError(exc)))
             except:
-                self.log.warning("PI get_pos failed !")
+                self.log.warning("Hardware get_pos failed !")
             finally:
                 return param_dict
         else:
@@ -640,10 +668,21 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         
         new_dict = {}
         for i, j in param_dict.items():
-            new_dict[i.upper()] = j * self.unit_factor
+            if i is 'x':
+                new_dict[1] = j * self.unit_factor
+            elif i is 'y':
+                new_dict[2] = j * self.unit_factor
+            elif i is 'z':
+                new_dict[3] = j * self.unit_factor
+            elif i is 'a': 
+                #FIXME: fourth axis
+                new_dict[4] = j * self.unit_factor
+            else:
+                #self.log.debug("PI send axis label to conver :" + str(i))
+                raise ("PI send axis label no found !")
+            # new_dict[i.upper()] = j * self.unit_factor
             #str upper: X Y Z A
             # unit conversion from communication: m to um
-
         return new_dict
 
     def _axis_dict_get(self, param_dict):
@@ -657,7 +696,19 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         """
         new_dict = {}
         for i, j in param_dict.items():
-            new_dict[i.upper()] = j / self.unit_factor
+            if i is '1':
+                new_dict['x'] = j / self.unit_factor
+            elif i is '2':
+                new_dict['y'] = j / self.unit_factor
+            elif i is '3':
+                new_dict['z'] = j / self.unit_factor
+            elif i is '4': 
+                #FIXME: fourth axis
+                new_dict['a'] = j / self.unit_factor
+            else:
+                #self.log.debug("PI get axis label" + str(i))
+                raise ("PI get axis label no found !")
+            #new_dict[i.upper()] = j / self.unit_factor
 
             #str lower: x y z a
             # unit conversion from communication: um to m

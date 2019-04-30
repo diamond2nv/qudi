@@ -103,10 +103,10 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         @return int: error code (0:OK, -1:error)
         """
         try:
-            self._scanner_hw.abort()
+            self._stage_hw.abort()
             self.log.warning('TODO: reset Stage.')
         except:
-            self.log.error("Can't abort scanner. Check device connection.")
+            self.log.error("Logic interfuse can't reset_hardware(abort stage). Check device connection.")
             return -1
         return 0
 
@@ -175,7 +175,6 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         @return int: error code (0:OK, -1:error)
         """
 
-        #return self._scanner_hw.set_up_scanner_clock(clock_frequency=clock_frequency, clock_channel=clock_channel)
         return 0
 
     def set_up_scanner(self, counter_channel = None, photon_source = None, clock_channel = None, scanner_ao_channels = None):
@@ -214,6 +213,7 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         move_dict['z'] = z
 
         try:
+            #self.log.debug("Logic will send to hardware :" + str(move_dict))
             self._stage_hw.move_abs(move_dict)
             return 0
         except:
@@ -232,6 +232,7 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
             
         try:
             pos_dict = self._stage_hw.get_pos()
+            #self.log.debug("Logic get from hardware: " + str(pos_dict))
             position = [pos_dict['x'], pos_dict['y'], pos_dict['z'], 0]
         except:
             self.log.error("Logic Interfuse can't get stage position. Check device connection!")
@@ -316,9 +317,9 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         @return int: error code (0:OK, -1:error)
         """
         try:
-            self._scanner_hw.abort()
+            self._stage_hw.abort()
         except:
-            self.log.error("Logic interfuse can't close scanner. Check device connection!")
+            self.log.error("Logic interfuse can't close scanner(abort stage). Check device connection!")
             return -1
 
         return 0
@@ -328,7 +329,7 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
 
         @return int: error code (0:OK, -1:error)
         """
-        #self._scanner_hw.close_scanner_clock()
+        #self._stage_hw.close_scanner_clock()
         return 0
 
     def set_dwell_count_bins(self, num_of_bins):
