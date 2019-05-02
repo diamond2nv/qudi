@@ -109,6 +109,10 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
     This is intended as Confocal PI Piezo Scanner Hardware module
     that can be connected to confocal_scanner_motor_interfuse logic.
 
+    If communication speed like MOV() for motor scanner is an issue, 
+    you can disable error checking:
+    # pidevice.errcheck = False
+
     Example config for copy-paste:
 
     piezo_stage_nanos:
@@ -141,9 +145,10 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
     _modtype = 'PiezoStagePI_PyGCS2'
     _modclass = 'hardware'
 
+    #the flag for connected to controller: such as E-727
+    _has_connect_piezo_controller = False
     #Need to communicate with piezo controller to confirm enable or not.
     _has_is_moving = False
-    _has_connect_piezo = False
     _has_move_abs = False
     _has_move_rel = False
     _has_abort = False
@@ -155,6 +160,8 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
     #default servo on for xyz
     _default_servo_state = [True, True, True]
 
+    #whether each axis range is smaller than its PI GCS range
+    _has_diff_constrains = False
 
     unit_factor = 1e6 # This factor converts the values given in m to um.
     ### !!!!! Attention the units can be changed by setunit
@@ -221,28 +228,32 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             #pidevice.ConnectTCPIP('192.168.178.42')
             try:
                 devices = pidevice.EnumerateUSB(mask=self._pi_controller_mask)
-                self.log.warning("PI ConnectUSB Devices:" + str(devices))
+                self.log.warning("PI ConnectUSB Devices found:" + str(devices))
                 if len(devices) is not 0:
                     pidevice.ConnectUSB(devices[0])
-                    self._has_connect_piezo = True                    
+                    self._has_connect_piezo_controller = True
+                else:
+                    try:
+                        devices = pidevice.EnumerateTCPIPDevices(mask=self._pi_controller_mask)
+                        self.log.warning("PI ConnectTCPIP Devices found:" + str(devices))
+                        if len(devices) is not 0:
+                            pidevice.ConnectTCPIPByDescription(devices[0])
+                            self._has_connect_piezo_controller = True
+                        else:
+                            raise ("NOT Found the PI Devices: {} by either USB or TCPIP: ".format(self._pi_controller_mask))
+                    except:
+                        pass
             except:
-                try:
-                    devices = pidevice.EnumerateTCPIPDevices(mask=self._pi_controller_mask)
-                    self.log.warning("PI ConnectTCPIP Devices:" + str(devices))
-                    if len(devices) is not 0:
-                        pidevice.ConnectTCPIPByDescription(devices[0])
-                        self._has_connect_piezo = True                        
-                except:
-                    pass
+                pass
 
-            if self._has_connect_piezo:
+            if self._has_connect_piezo_controller:
                 device_name = pidevice.qIDN()
                 self._set_servo_state(True)
-                self.log.info('Activate Motor and Set servo on for PI Controller = {}'.format(device_name.strip()))
+                self.log.warning('Activate Motor and Set servo on for PI Controller = {}'.format(device_name.strip()))
 
             else:
-                self.log.error("Not Found PI Controller = {} !".format(self._pi_controller_mask))
-                return -1
+                raise ("Not Connect PI Controller = {} !".format(self._pi_controller_mask))
+
         except GCSError as exc:
             self.log.error("PI GCSError: " + str(GCSError(exc)))
             return -1
@@ -251,10 +262,10 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             self.log.error("Not Found PI Controller = {} !".format(self._pi_controller_mask))
             return -1
         except:
-            self.log.error("Not Activate Motor!")
+            self.log.error("Hardware Not Activate PI Devices!")
             return -1
 
-        if self._has_connect_piezo:
+        if self._has_connect_piezo_controller:
             try:
                 self._has_move_abs = pidevice.HasMOV()
                 self._has_get_pos = pidevice.HasqPOS()
@@ -278,8 +289,8 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                     self.log.error("PI Device has no MOV() or qPOS() func !")
                     return -1
 
-                # pidevice.errcheck = False
-                #FIXME: If communication speed like MOV() for motor scanner is an issue, you can disable error checking.
+                pidevice.errcheck = False
+                #TODO: If communication speed like MOV() for motor scanner is an issue, you can disable error checking.
             except:
                 self.log.error("PI GCSError: " + str(GCSError(exc)))
                 return -1
@@ -296,7 +307,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         try:
             pidevice.errcheck = True
             pidevice.CloseConnection()
-            self.log.warning("PI Device Close Connection !")
+            self.log.warning("PI Device has been closed connection !")
             return 0
         except GCSError as exc:
             self.log.error("PI GCSError: " + str(GCSError(exc)))
@@ -367,14 +378,15 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         return constraints
 
     def move_rel(self, param_dict):
-        """ Move stage relatively in given direction
-
+        """ Move stage relatively, positive or negative value.And if step is
+        too small, PI GCS will ignore.#TODO:check this in PI GCS.
             @param dict param_dict : dictionary, which passes all the relevant
                                      parameters, which should be changed. Usage:
                                      {'axis_label': <the-abs-pos-value>}.
                                      'axis_label' must correspond to a label given
                                      to one of the axis.
-
+                                     The values for the axes are in meter,
+                                     the value for the rotation is in degrees.
 
             @return dict param_dict : dictionary with the current magnet position
         """
@@ -386,10 +398,25 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             pos = self.get_pos([param_dict.keys()])
         except GCSError as exc:
             self.log.warning("PI GCSError: " + str(GCSError(exc)))
-            return pos
+            raise
 
-        #move_rel to target pos()
         if self._has_move_rel:
+            #if config range is smaller than PI GCS range
+            if self._has_diff_constrains:
+                #if target is not in the config range
+                if self._move_rel_range_check(pos, param_dict) is False:
+                    self.log.warning('''Cannot make the movement of the axis, 
+                    out config range! Command ignore.''') 
+                    try:
+                        self.on_target()
+                        pos = self.get_pos([param_dict.keys()])
+                        return pos
+                    except GCSError as exc:
+                        self.log.debug("PI GCSError: " + str(GCSError(exc)))
+                        pass
+                    except:
+                        self.log.warning("PI GCS move_rel / MVR failed !")
+                        raise
             try:
                 #self.log.debug("Send MVR to hardware PI before conver: " + str(param_dict))
                 new_param_dict = self._axis_dict_send(param_dict)
@@ -403,19 +430,20 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 except:
                     pass
             except GCSError as exc:
-                self.log.warning("PI GCSError: " + str(GCSError(exc)))
+                self.log.debug("PI GCSError: " + str(GCSError(exc)))
+                pass
             except:
-                self.log.warning("PI move_rel / MVR failed !")
+                self.log.warning("PI GCS move_rel / MVR failed !")
                 raise
         else:
-            self.log.warning('PI MVR Function not yet implemented')
+            self.log.warning('PI GCS MVR Function not yet implemented')
 
         return pos
 
     def move_abs(self, param_dict):
         """ Move the stage to an absolute position
 
-        @param dict param_dict : dictionary, which passes all the relevant
+        @param dict param_dict : dictionary, which passes all the absolute
                                  parameters, which should be changed. Usage:
                                  {'axis_label': <the-abs-pos-value>}.
                                  'axis_label' must correspond to a label given
@@ -427,6 +455,23 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         """
         # pidevice.MOV or pidevice.MVT is better ?
         if self._has_move_abs:
+            #if config range is smaller than PI GCS range
+            if self._has_diff_constrains:
+                #if target is not in the config range
+                if self._move_abs_range_check(param_dict) is False:
+                    self.log.warning('''Cannot make the movement of the axis, 
+                    out config range! Command ignore.''') 
+                    try:
+                        self.on_target()
+                        pos = self.get_pos([param_dict.keys()])
+                        return pos
+                    except GCSError as exc:
+                        self.log.debug("PI GCSError: " + str(GCSError(exc)))
+                        pass
+                    except:
+                        self.log.error("PI move_abs / MOV failed !")
+                        raise
+
             try:
                 #self.log.debug("Send MOV to hardware PI before conver: " + str(param_dict))
                 new_param_dict = self._axis_dict_send(param_dict)
@@ -434,12 +479,13 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 pidevice.MOV(new_param_dict)
                 #Send str upper + um: 1 2 3
             except GCSError as exc:
-                self.log.warning("PI GCSError: " + str(GCSError(exc)))
+                self.log.debug("PI GCSError: " + str(GCSError(exc)))
+                pass
             except:
-                self.log.warning("PI move_abs failed !")
+                self.log.error("PI GCS move_abs / MOV failed !")
                 raise
         else:
-            self.log.warning('PI MOV Function not yet implemented')
+            self.log.warning('PI GCS MOV Function not yet implemented')
 
         return param_dict
 
@@ -455,6 +501,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                     try:
                         pidevice.StopAll()
                         pidevice.errcheck = True
+                        self.log.debug("PI Device has aborted and stoped all move! ")
                         return 0
                     except GCSError as exc:
                         self.log.error("PI GCSError: " + str(GCSError(exc)))
@@ -464,17 +511,19 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                         return -1
                 else:
                     #if not moving, PI stage is stoped already.
+                    self.log.warning("PI Device has aborted and stoped all move! ")
                     return 0
             else:      
                 try:
                     pidevice.StopAll()
                     pidevice.errcheck = True
+                    self.log.debug("PI Device has aborted and stoped all move! ")
                     return 0
                 except GCSError as exc:
                     self.log.error("PI GCSError: " + str(GCSError(exc)))
                     #raise GCSError(exc)
                     #FIXME
-                    return 0
+                    return -1
         else:
             self.log.warning('PI System Abort/StopAll Function not yet implemented')
             return 0
@@ -491,21 +540,32 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         @return dict param_dict : with keys being the axis labels and item the current
                                   position.
         """
+        
+        param_dict_get = {}
         param_dict = {}
         if self._has_get_pos:
+            new_param_list = self._axis_label_conver2pipy(param_list)
             try:
-                param_dict=pidevice.qPOS()
-                #FIXME: param_dict=pidevice.qPOS(param_list) : ['1','2','3']
+                param_dict_get=pidevice.qPOS(new_param_list)
                 #self.log.debug("Hardware get before conver :" + str(param_dict))
+
                 # axis dict get conversion 
-                param_dict = self._axis_dict_get(param_dict)
+                param_dict = self._axis_dict_get(param_dict_get)
                 #self.log.debug("Hardware get :" + str(param_dict))
-            except GCSError as exc:
-                self.log.error("PI GCSError: " + str(GCSError(exc)))
-            except:
-                self.log.warning("Hardware get_pos failed !")
-            finally:
                 return param_dict
+            except GCSError as exc:
+                self.log.debug("PI GCSError: " + str(GCSError(exc)))
+                try:
+                    self.on_target()
+                    #try wait for on target, then get positions.
+                    param_dict_get=pidevice.qPOS(new_param_list)
+                    param_dict = self._axis_dict_get(param_dict_get)
+                    return param_dict
+                except:
+                    pass
+            except:
+                self.log.error("Hardware get_pos failed !")
+                raise
         else:
             self.log.warning('PI qPOS() Function not yet implemented')
             return param_dict
@@ -675,8 +735,9 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             elif i is 'z':
                 new_dict[3] = j * self.unit_factor
             elif i is 'a': 
-                #FIXME: fourth axis
-                new_dict[4] = j * self.unit_factor
+                #TODO: fourth axis
+                pass
+                #new_dict[4] = j * self.unit_factor
             else:
                 #self.log.debug("PI send axis label to conver :" + str(i))
                 raise ("PI send axis label no found !")
@@ -714,3 +775,101 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             # unit conversion from communication: um to m
 
         return new_dict
+
+    def _axis_label_conver2pipy(self, param_list=None):
+        """Set the capitalization axis label to GCS command format.
+        @param list param_list : optional, if a specific position of an axis
+                                 is desired, then the labels of the needed
+                                 axis should be passed in the param_list.
+                                 If nothing is passed, then the lables of
+                                 all axes are returned.
+                                 ['1','2','3']
+        """
+        conver_dict = {'x':'1','y':'2','z':'3'}
+        new_param_list = list() 
+        if param_list is not None:           
+            for i in param_list:
+                new_param_list.append(conver_dict[i])
+        if len(new_param_list) is 0:
+            return ['1','2','3']
+        else:
+            return new_param_list
+
+    #FIXME: maybe not needed for PI GCS, though it will check again.
+    #But when config constraints smaller than PI GCS range
+    #check, it will became important. Condition like axis 
+    #with object lens.
+    def _move_abs_range_check(self, param_dict):
+        """Check the send move_abs within the config range,
+        NOT needed for PI GCS, add this will increase spending time.
+        @param dict param_dict : dictionary, which passes all the absolute
+                                 parameters, which should be changed. Usage:
+                                 {'axis_label': <the-abs-pos-value>}.
+                                 'axis_label' must correspond to a label given
+                                 to one of the axis.
+                                 The values for the axes are in meter,
+                                 the value for the rotation is in degrees.
+
+        @return bool : True or False. False mean target out of config.
+        """
+        #TODO: if range is smaller than PI GCS range.
+        #if self._has_diff_constrains:
+
+        #constraints = self._configured_constraints
+
+        return True
+
+    def _move_rel_range_check(self, position_dict, param_dict):
+        """Check the send move_rel within the config range,
+        NOT needed for PI GCS, add this will increase spending time.
+        if step is too small, PI GCS will ignore.#TODO:check this in PI GCS.
+            @param dict position_dict : dictionary with the current stage position
+
+            @param dict param_dict : dictionary, which passes all the relevant
+                                     parameters, which should be changed. Usage:
+                                     {'axis_label': <the-abs-pos-value>}.
+                                     'axis_label' must correspond to a label given
+                                     to one of the axis.
+
+            @return bool: True or False. False mean target out of config.
+        """
+        #TODO: if range is smaller than PI GCS range.
+        #if self._has_diff_constrains:
+
+        #constraints = self._configured_constraints
+
+        return True
+
+    def _has_diff_constrains_check(self):
+        """#whether each axis range is smaller than its PI GCS range.
+        bool dict flage:_has_diff_constrains will be True.
+        To enable hardware-module pre check than PI GCS 
+        for the axis move to target value.
+                             set enable? 
+                             range pzt hardware?
+                             is 'P-563' ?
+                             if larger, auto-reset?
+        @return True or False
+        """
+        #TODO
+        #constraints = self._configured_constraints
+        return False
+
+    def _set_safe_range4objectlens_axis(self, axis_lable=None):
+        """Set safely PI GCS solft range limitation to PZT axis with object lens
+        usually z axis.And then, _has_diff_constrains=False,needed for xy scan, 
+        can run move-abs hardware module faster.
+        @axis_lable :   get from config,now it is only one
+                        axis with all object lens,usually is z.
+                        question PZT controller:
+
+        @return int: error code (0:OK, -1:error)
+        """
+        #TODO: needed for using command inerface in stand alone Jupyter(Qudi).
+        #FIXME: Well, set safe range for z, and then, _has_diff_constrains=False,
+        # needed for xy scan, running move-abs hardware module faster 
+        #self._has_diff_constrains_check()
+        #range config now?
+        #range safe config now?
+        #--->the smallest one----intersection---AND: math logic
+        return 0

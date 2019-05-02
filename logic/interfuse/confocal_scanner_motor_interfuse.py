@@ -86,7 +86,7 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         self._stage_hw = self.get_connector('stage1')
 
         self._position_range = self.get_position_range()
-        self._current_position = [0., 0., 0.]
+        self._current_position = [0., 0., 0.,0.]
 
         # The number of counter logic bins to include in count data for a scan pixel
         self._dwell_cnt_bins = 1
@@ -104,9 +104,12 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         """
         try:
             self._stage_hw.abort()
-            self.log.warning('TODO: reset Stage.')
+            time.sleep(0.1)
+            self._stage_hw.on_deactivate()
+            self.log.debug('Loagic Scan interfuse has aborted stage hardware, and deactivated it.')
         except:
-            self.log.error("Logic interfuse can't reset_hardware(abort stage). Check device connection.")
+            self.log.error('''Logic interfuse can't reset_hardware(abort stage, and deactivate it). 
+            Check device connection.''')
             return -1
         return 0
 
@@ -126,6 +129,8 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
             pos_range[1] = self._constraints_to_range(hw_constraints, 'y')
         if 'z' in hw_constraints.keys():
             pos_range[2] = self._constraints_to_range(hw_constraints, 'z')
+        if 'a' in hw_constraints.keys():
+            pos_range[3] = self._constraints_to_range(hw_constraints, 'a')
         
         return pos_range
 
@@ -211,6 +216,7 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         move_dict['x'] = x
         move_dict['y'] = y
         move_dict['z'] = z
+        move_dict['a'] = a
 
         try:
             #self.log.debug("Logic will send to hardware :" + str(move_dict))
@@ -226,20 +232,29 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         @return float[]: current position in (x, y, z, a).
         """
         position = [0.,0.,0.,0.]
-        prange = self.get_position_range()
-        for i in range(4):            
-            position[i] = prange[i].mean()
+        #prange = self.get_position_range()
+        #for i in range(4):            
+        #    position[i] = prange[i].mean()
             
         try:
             pos_dict = self._stage_hw.get_pos()
             #self.log.debug("Logic get from hardware: " + str(pos_dict))
             position = [pos_dict['x'], pos_dict['y'], pos_dict['z'], 0]
+            return position
         except:
-            self.log.error("Logic Interfuse can't get stage position. Check device connection!")
-            raise
+            #self.log.warning("Logic Interfuse can't get stage position. Will try again...")
+            #maybe PZT stage is busy
+            time.sleep(0.1)
+            try:
+                pos_dict = self._stage_hw.get_pos()
+                #self.log.debug("Logic get from hardware: " + str(pos_dict))
+                position = [pos_dict['x'], pos_dict['y'], pos_dict['z'], 0]
+                return position
+            except:
+                self.log.error('''Logic Interfuse can't get stage position from hardware module, twice. 
+                Check device connection!''')
+                raise
 
-        return position
-    
     def on_target(self):
         """ Stage will move all axes to targets 
         and waits until the motion has finished.
