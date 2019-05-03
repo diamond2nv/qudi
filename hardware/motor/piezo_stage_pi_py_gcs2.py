@@ -166,7 +166,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
     unit_factor = 1e6 # This factor converts the values given in m to um.
     ### !!!!! Attention the units can be changed by setunit
 
-    #TODO: config options, like other motor hardware
+    #config options, like other motor hardware
     _pi_controller_mask = ConfigOption('pi_controller_mask', 'E-727', missing='warn')
     _pi_piezo_stage_mask = ConfigOption('pi_piezo_stage_mask', 'P-563', missing='warn')
 
@@ -187,6 +187,12 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
     _max_third = ConfigOption('third_max', 100e-6, missing='warn')
     #_min_fourth = ConfigOption('fourth_min', 0e-6, missing='warn')
     #_max_fourth = ConfigOption('fourth_max', 0e-6, missing='warn')
+
+    #FIXME:
+    #_objectlens_axis_lable = ConfigOption('objectlens_axis_lable', 'z', missing='warn')
+    #canbe changed by set range
+    #min_softlim_4_objectlens_axis = ConfigOption('min_softlim_range_4_objectlens_axis', 0e-6, missing='warn')
+    #max_softlim_4_objectlens_axis = ConfigOption('max_softlim_range_4_objectlens_axis', 300e-6, missing='warn')
 
     step_first_axis = ConfigOption('first_axis_step', 1e-9, missing='warn')
     step_second_axis = ConfigOption('second_axis_step', 1e-9, missing='warn')
@@ -219,7 +225,6 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         try:
             self._configured_constraints = self.get_constraints()
             #FIXME: use this logic instead of PI GCS error to threshold commond move_abs()
-            #TODO: get_constraints by question with controller
             pidevice.errcheck = True
 
             #FIXME This will trigger a GUI, shoud be taken by Qudi GUI.
@@ -240,7 +245,8 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                             pidevice.ConnectTCPIPByDescription(devices[0])
                             self._has_connect_piezo_controller = True
                         else:
-                            raise ("NOT Found the PI Devices: {} by either USB or TCPIP: ".format(self._pi_controller_mask))
+                            self.log.error("NOT Found the PI Devices: {} by either USB or TCPIP: ".format(self._pi_controller_mask))
+                            raise
                     except:
                         pass
             except:
@@ -261,8 +267,8 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         except IndexError:
             self.log.error("Not Found PI Controller = {} !".format(self._pi_controller_mask))
             return -1
-        except:
-            self.log.error("Hardware Not Activate PI Devices!")
+        except Exception as e:
+            self.log.error("Hardware Not Activated: PI Devices!")
             return -1
 
         if self._has_connect_piezo_controller:
@@ -270,6 +276,12 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 self._has_move_abs = pidevice.HasMOV()
                 self._has_get_pos = pidevice.HasqPOS()
                 #above is important to logic interfuse motor scanner
+
+                #Hardware module xyz range self-auto-check.
+                self._has_diff_constrains = self._has_diff_constrains_check()
+
+                #Safe range init set by PI GCS for one axis with object lens.
+                self._set_safe_range4objectlens_axis()
 
                 if self._has_move_abs and self._has_get_pos:
                     try:
@@ -284,13 +296,15 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                         self.log.warning("PI GCSError: " + str(GCSError(exc)))
                         pass
                     finally:
+                        pidevice.errcheck = False
+                        #TODO: If communication speed like MOV() for motor scanner is an issue, 
+                        # can disable error checking.
+                        self.log.debug("PI PZT is ready to go.")
                         return 0
                 else:
                     self.log.error("PI Device has no MOV() or qPOS() func !")
                     return -1
 
-                pidevice.errcheck = False
-                #TODO: If communication speed like MOV() for motor scanner is an issue, you can disable error checking.
             except:
                 self.log.error("PI GCSError: " + str(GCSError(exc)))
                 return -1
@@ -408,15 +422,19 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                     self.log.warning('''Cannot make the movement of the axis, 
                     out config range! Command ignore.''') 
                     try:
+                        #self.abort()
                         self.on_target()
                         pos = self.get_pos([param_dict.keys()])
-                        return pos
                     except GCSError as exc:
                         self.log.debug("PI GCSError: " + str(GCSError(exc)))
                         pass
                     except:
                         self.log.warning("PI GCS move_rel / MVR failed !")
-                        raise
+                        pass
+                    finally:
+                        return pos
+            
+            # move rel
             try:
                 #self.log.debug("Send MVR to hardware PI before conver: " + str(param_dict))
                 new_param_dict = self._axis_dict_send(param_dict)
@@ -430,11 +448,11 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 except:
                     pass
             except GCSError as exc:
-                self.log.debug("PI GCSError: " + str(GCSError(exc)))
-                pass
+                self.log.error("PI GCSError(MVR): " + str(GCSError(exc)))
             except:
-                self.log.warning("PI GCS move_rel / MVR failed !")
-                raise
+                self.log.error("PI GCS move_rel / MVR failed !")
+            finally:
+                return pos
         else:
             self.log.warning('PI GCS MVR Function not yet implemented')
 
@@ -462,32 +480,50 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                     self.log.warning('''Cannot make the movement of the axis, 
                     out config range! Command ignore.''') 
                     try:
+                        #self.abort()
                         self.on_target()
                         pos = self.get_pos([param_dict.keys()])
                         return pos
                     except GCSError as exc:
                         self.log.debug("PI GCSError: " + str(GCSError(exc)))
+                        raise
+                    except (KeyboardInterrupt, SystemExit):
+                        # user wants to quit
+                        self.log.warning("User wants to quit: keyboard interrupt or system exit!")
                         pass
-                    except:
+                    except Exception:
                         self.log.error("PI move_abs / MOV failed !")
+                        #FIXME:
                         raise
 
+            #move abs: most used in scan, must be very fast to run python.
             try:
                 #self.log.debug("Send MOV to hardware PI before conver: " + str(param_dict))
                 new_param_dict = self._axis_dict_send(param_dict)
                 #self.log.debug("Send MOV to hardware PI actually: " + str(new_param_dict))
                 pidevice.MOV(new_param_dict)
                 #Send str upper + um: 1 2 3
+                return param_dict
             except GCSError as exc:
-                self.log.debug("PI GCSError: " + str(GCSError(exc)))
+                self.log.debug("PI GCSError(MOV): " + str(GCSError(exc)))
                 pass
-            except:
-                self.log.error("PI GCS move_abs / MOV failed !")
+                #FIXME: if move abs failed, return get position ?
+                # but when xy is ok and z is error, still goto xy ?
+                return param_dict
+            except (KeyboardInterrupt, SystemExit):
+                # user wants to quit
+                self.log.warning("User wants to quit: keyboard interrupt or system exit!")
+                #pass
+                self.abort()
+                pos = self.get_pos([param_dict.keys()])
+                return pos
+            except Exception:
+                self.log.error("PI move_abs / MOV failed !")
                 raise
+
         else:
             self.log.warning('PI GCS MOV Function not yet implemented')
-
-        return param_dict
+            return param_dict
 
     def abort(self):
         """ Stop movement of the stage
@@ -500,13 +536,17 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 if pidevice.IsMoving:
                     try:
                         pidevice.StopAll()
-                        pidevice.errcheck = True
+                        #pidevice.errcheck = True
                         self.log.debug("PI Device has aborted and stoped all move! ")
                         return 0
                     except GCSError as exc:
-                        self.log.error("PI GCSError: " + str(GCSError(exc)))
+                        self.log.error("PI GCSError(StopAll): " + str(GCSError(exc)))
                         return -1
-                    except:
+                    except (KeyboardInterrupt, SystemExit):
+                        # user wants to quit
+                        self.log.warning("User wants to quit: keyboard interrupt or system exit!")
+                        pidevice.StopAll()
+                    except Exception:
                         self.log.error("Hardware PI cannot abort move !")
                         return -1
                 else:
@@ -516,13 +556,20 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             else:      
                 try:
                     pidevice.StopAll()
-                    pidevice.errcheck = True
+                    #pidevice.errcheck = True
                     self.log.debug("PI Device has aborted and stoped all move! ")
                     return 0
                 except GCSError as exc:
                     self.log.error("PI GCSError: " + str(GCSError(exc)))
                     #raise GCSError(exc)
                     #FIXME
+                    return -1
+                except (KeyboardInterrupt, SystemExit):
+                    # user wants to quit
+                    self.log.warning("User wants to quit: keyboard interrupt or system exit!")
+                    pidevice.StopAll()
+                except Exception:
+                    self.log.error("Hardware PI cannot abort move !")
                     return -1
         else:
             self.log.warning('PI System Abort/StopAll Function not yet implemented')
@@ -541,7 +588,6 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                                   position.
         """
         
-        param_dict_get = {}
         param_dict = {}
         if self._has_get_pos:
             new_param_list = self._axis_label_conver2pipy(param_list)
@@ -554,15 +600,19 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 #self.log.debug("Hardware get :" + str(param_dict))
                 return param_dict
             except GCSError as exc:
-                self.log.debug("PI GCSError: " + str(GCSError(exc)))
+                self.log.debug("PI GCSError(qPOS): " + str(GCSError(exc)))
                 try:
                     self.on_target()
                     #try wait for on target, then get positions.
                     param_dict_get=pidevice.qPOS(new_param_list)
                     param_dict = self._axis_dict_get(param_dict_get)
                     return param_dict
-                except:
-                    pass
+                except (KeyboardInterrupt, SystemExit):
+                    # user wants to quit
+                    self.log.warning("User wants to quit: keyboard interrupt or system exit!")
+                    return param_dict
+                except Exception:
+                    raise
             except:
                 self.log.error("Hardware get_pos failed !")
                 raise
@@ -583,8 +633,9 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
 
         @return int: error code (0:OK, -1:error)
         """
-        if param_list is None:        
+        if param_list is None:
             for i in range(10):
+                #if xyz not all on target:
                 if not all(list(pidevice.qONT().values())):
                     time.sleep(0.1)
                     i += 1
@@ -592,6 +643,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                         return -1
                         #over time
                 else:
+                    #break and return OK
                     return 0
 
         else:
@@ -642,17 +694,25 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
 
         if self._has_calibrate:
             try:
-                pidevice.StopAll()
+                self.abort()
                 pidevice.errcheck = True
                 pidevice.ATZ()
                 #PI Piezo Auto To Zero Calibration, just do it after power shutdown.
+                time.sleep(1.0)
                 param_dict = pidevice.qATZ()
                 #has ATZ(), also should has qATZ()
-            except GCSError as exc:
-                self.log.error("PI GCSError: " + str(GCSError(exc)))
-                #raise GCSError(exc)
-            finally:
                 return param_dict
+            except GCSError as exc:
+                self.log.error("PI GCSError(ATZ or qATZ): " + str(GCSError(exc)))
+                #raise GCSError(exc)
+                raise
+            except (KeyboardInterrupt, SystemExit):
+                # user wants to quit
+                self.log.warning("User wants to quit: keyboard interrupt or system exit!")
+                raise
+            except Exception:
+                raise
+                
         else:
             self.log.warning('PI Auto To Zero Function not yet implemented')
             return param_dict
@@ -716,8 +776,8 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             self.log.error("PI XYZ axis servo on failed!")
 
     def _axis_dict_send(self, param_dict):
-        """ Set the capitalization axis label to str upper().
-        #FIXME: Maybe not necessary for PIPython module
+        """ Set the capitalization axis label to GCS command format.
+        #TODO: Maybe not necessary for PIPython module
 
         @param dict param_dict : dictionary, which passes all the relevant
                                  parameters, which should be changed. Usage:
@@ -726,7 +786,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                                  to one of the axis.
         """
         
-        new_dict = {}
+        new_dict = {1:0.0, 2:0.0, 3:0.0}
         for i, j in param_dict.items():
             if i is 'x':
                 new_dict[1] = j * self.unit_factor
@@ -740,7 +800,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                 #new_dict[4] = j * self.unit_factor
             else:
                 #self.log.debug("PI send axis label to conver :" + str(i))
-                raise ("PI send axis label no found !")
+                raise ("PI send axis label no found ! Can't conver label.")
             # new_dict[i.upper()] = j * self.unit_factor
             #str upper: X Y Z A
             # unit conversion from communication: m to um
@@ -755,7 +815,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                                  'axis_label' must correspond to a label given
                                  to one of the axis.
         """
-        new_dict = {}
+        new_dict = {'x':0.0, 'y':0.0, 'z':0.0, 'a':0.0}
         for i, j in param_dict.items():
             if i is '1':
                 new_dict['x'] = j / self.unit_factor
@@ -764,11 +824,11 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             elif i is '3':
                 new_dict['z'] = j / self.unit_factor
             elif i is '4': 
-                #FIXME: fourth axis
+                #TODO: fourth axis
                 new_dict['a'] = j / self.unit_factor
             else:
                 #self.log.debug("PI get axis label" + str(i))
-                raise ("PI get axis label no found !")
+                raise ("PI get axis label no found ! Can't conver label.")
             #new_dict[i.upper()] = j / self.unit_factor
 
             #str lower: x y z a

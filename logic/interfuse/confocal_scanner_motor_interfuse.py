@@ -22,6 +22,7 @@ top-level directory of this distribution and at <https://github.com/Ulm-IQO/qudi
 """
 
 import time
+import operator
 import numpy as np
 
 from core.module import Base, Connector, ConfigOption
@@ -65,6 +66,9 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
     _modclass = 'confocalscannerinterface'
     _modtype = 'hardware'
 
+    # confocal scanner
+    _scanner_position_ranges = ConfigOption('scanner_position_ranges', missing='error')
+
     # connectors
     counterlogic = Connector(interface='CounterLogic')
     stage1 = Connector(interface='MotorInterface')
@@ -80,19 +84,32 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
 
     def on_activate(self):
         """ Initialisation performed during activation of the module.
+
+            @return: error code (0:OK, -1:error)
         """
 
         self._counter_logic = self.get_connector('counterlogic')
         self._stage_hw = self.get_connector('stage1')
 
+        self._get_position_range_init()
         self._position_range = self.get_position_range()
-        self._current_position = [0., 0., 0.,0.]
+        self._middle_xyz_pos = [0., 0., 0., 0.]
+        for i in range(4):            
+            self._middle_xyz_pos[i] = 0.5 * (self._position_range[i][0] + self._position_range[i][1])
 
-        # The number of counter logic bins to include in count data for a scan pixel
-        self._dwell_cnt_bins = 1
+        try:
+            self._current_position = np.array(self._get_scanner_position_init())
+        except:
+            self._current_position = self._middle_xyz_pos
+            self.log.error("Logic interfuse activation: failed !\nSet cross to middle: " + str(self._current_position))
+            return -1
+        else:
+            # The number of counter logic bins to include in count data for a scan pixel
+            self._dwell_cnt_bins = 1
 
-        # The dwell time (seconds) to wait before sampling counter logic counts for the scan pixel
-        self._dwell_delay = 0.02
+            # The dwell time (seconds) to wait before sampling counter logic counts for the scan pixel
+            self._dwell_delay = 0.02
+            return 0
 
     def on_deactivate(self):
         self.reset_hardware()
@@ -115,24 +132,12 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
 
     def get_position_range(self):
         """ Returns the physical range of the scanner.
-        This is a direct pass-through to the scanner HW.
 
-        @return float [4][2]: array of 4 ranges with an array containing lower and upper limit
+        @return float [4][2]: array of 4 ranges with an array containing lower
+                              and upper limit. The unit of the scan range is
+                              meters.
         """
-        hw_constraints = self._stage_hw.get_constraints()
-
-        pos_range = np.zeros((4, 2))
-
-        if 'x' in hw_constraints.keys():
-            pos_range[0] = self._constraints_to_range(hw_constraints, 'x')
-        if 'y' in hw_constraints.keys():
-            pos_range[1] = self._constraints_to_range(hw_constraints, 'y')
-        if 'z' in hw_constraints.keys():
-            pos_range[2] = self._constraints_to_range(hw_constraints, 'z')
-        if 'a' in hw_constraints.keys():
-            pos_range[3] = self._constraints_to_range(hw_constraints, 'a')
-        
-        return pos_range
+        return self._scanner_position_ranges
 
     def set_position_range(self, myrange=None):
         """ Sets the physical range of the scanner.
@@ -143,8 +148,33 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         @return int: error code (0:OK, -1:error)
         """
         # TODO
-        self.log.warning('Logic interfuse cannot set position range yet - fix TODO')
+        #self.log.warning('Logic interfuse cannot set position range yet - fix TODO')
 
+        if myrange is None:
+            myrange = [[0, 1e-6], [0, 1e-6], [0, 1e-6], [0, 1e-6]]
+
+        if not isinstance(myrange, (frozenset, list, set, tuple, np.ndarray, )):
+            self.log.error('Given range is no array type.')
+            return -1
+
+        if len(myrange) != 4:
+            self.log.error(
+                'Given range should have dimension 4, but has {0:d} instead.'
+                ''.format(len(myrange)))
+            return -1
+
+        for pos in myrange:
+            if len(pos) != 2:
+                self.log.error(
+                    'Given range limit {1:d} should have dimension 2, but has {0:d} instead.'
+                    ''.format(len(pos), pos))
+                return -1
+            if pos[0]>pos[1]:
+                self.log.error(
+                    'Given range limit {0:d} has the wrong order.'.format(pos))
+                return -1
+
+        self._scanner_position_ranges = myrange
         return 0
 
     def set_voltage_range(self, myrange=None):
@@ -211,49 +241,50 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
 
         @return int: error code (0:OK, -1:error)
         """
-
         move_dict = {}
-        move_dict['x'] = x
-        move_dict['y'] = y
-        move_dict['z'] = z
-        move_dict['a'] = a
+
+        if x is not None:
+            if not(self._scanner_position_ranges[0][0] <= x <= self._scanner_position_ranges[0][1]):
+                self.log.error("You want to set x-axis out of scan-config range: {0:f}.".format(x))
+                return -1
+            self._current_position[0] = np.float(x)
+            move_dict['x'] = self._current_position[0]
+
+        if y is not None:
+            if not(self._scanner_position_ranges[1][0] <= y <= self._scanner_position_ranges[1][1]):
+                self.log.error("You want to set y-axis out of scan-config range: {0:f}.".format(y))
+                return -1
+            self._current_position[1] = np.float(y)
+            move_dict['y'] = self._current_position[1]
+
+        if z is not None:
+            if not(self._scanner_position_ranges[2][0] <= z <= self._scanner_position_ranges[2][1]):
+                self.log.error("You want to set z-axis out of scan-config range: {0:f}.".format(z))
+                return -1
+            self._current_position[2] = np.float(z)
+            move_dict['z'] = self._current_position[2]
+
+        if a is not None:
+            if not(self._scanner_position_ranges[3][0] <= a <= self._scanner_position_ranges[3][1]):
+                self.log.error("You want to set a-axis out of scan-config range: {0:f}.".format(a))
+                return -1
+            self._current_position[3] = np.float(a)
+            move_dict['a'] = self._current_position[3]
 
         try:
             #self.log.debug("Logic will send to hardware :" + str(move_dict))
             self._stage_hw.move_abs(move_dict)
             return 0
-        except:
-            self.log.error("Logic interfuse can't set stage position. Check device connection!")
-            raise
+        except Exception as e:
+            self.log.error("Logic interfuse can't set stage position. Check device connection!\n" + str(e))
+            return -1
 
     def get_scanner_position(self):
         """ Get the current position of the scanner hardware.
 
         @return float[]: current position in (x, y, z, a).
         """
-        position = [0.,0.,0.,0.]
-        #prange = self.get_position_range()
-        #for i in range(4):            
-        #    position[i] = prange[i].mean()
-            
-        try:
-            pos_dict = self._stage_hw.get_pos()
-            #self.log.debug("Logic get from hardware: " + str(pos_dict))
-            position = [pos_dict['x'], pos_dict['y'], pos_dict['z'], 0]
-            return position
-        except:
-            #self.log.warning("Logic Interfuse can't get stage position. Will try again...")
-            #maybe PZT stage is busy
-            time.sleep(0.1)
-            try:
-                pos_dict = self._stage_hw.get_pos()
-                #self.log.debug("Logic get from hardware: " + str(pos_dict))
-                position = [pos_dict['x'], pos_dict['y'], pos_dict['z'], 0]
-                return position
-            except:
-                self.log.error('''Logic Interfuse can't get stage position from hardware module, twice. 
-                Check device connection!''')
-                raise
+        return self._current_position.tolist()
 
     def on_target(self):
         """ Stage will move all axes to targets 
@@ -384,6 +415,8 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         """
         return self._dwell_delay
 
+########################## internal methods ##################################
+
     def _constraints_to_range(self, hw_constraints, axis):
         """ Turn constraints dict from hardware into the  position range
         required for the scanner interface.
@@ -412,3 +445,58 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
             return [0, 0]
 
         return [pos_min, pos_max]
+
+    def _get_position_range_init(self):
+        """ Check the physical range of the scanner and stage config.
+        """
+        hw_constraints = self._stage_hw.get_constraints()
+
+        pos_range = np.zeros((4, 2))
+
+        if 'x' in hw_constraints.keys():
+            pos_range[0] = self._constraints_to_range(hw_constraints, 'x')
+        if 'y' in hw_constraints.keys():
+            pos_range[1] = self._constraints_to_range(hw_constraints, 'y')
+        if 'z' in hw_constraints.keys():
+            pos_range[2] = self._constraints_to_range(hw_constraints, 'z')
+        if 'a' in hw_constraints.keys():
+            pos_range[3] = self._constraints_to_range(hw_constraints, 'a')
+
+        #FIXME: only xyz
+        stage_range = pos_range.tolist()[0:3]
+        scan_range = self._scanner_position_ranges[0:3]
+
+        #TODO: merge scan range and motor range in config?
+        if operator.eq(scan_range, stage_range):
+            self.log.debug("Config interfuse range xyz: hardware stage constraints == logic scan range.")
+        else:
+            self.log.warning("Config interfuse warning: hardware stage constraints range NOT equal to logic scan range.\n" + 
+                            "stage range config   ={}\nscanner range config ={}".format(stage_range, scan_range))
+
+    def _get_scanner_position_init(self):
+        """ Get the current position of the scanner hardware.
+
+        @return float[]: current position in (x, y, z, a).
+        """
+        position = [0.,0.,0.,0.]
+            
+        try:
+            pos_dict = self._stage_hw.get_pos()
+            #self.log.debug("Logic get from hardware: " + str(pos_dict))
+            position = [pos_dict['x'], pos_dict['y'], pos_dict['z'], 0]
+            return position
+        except KeyError as ker:
+            self.log.error("Logic Interfuse can't get stage position from hardware module. Check device connection!")
+            pass
+        except Exception as exc:
+            #self.log.warning("Logic Interfuse can't get stage position. Will try again...")
+            #maybe PZT stage is busy
+            time.sleep(0.1)
+            try:
+                pos_dict = self._stage_hw.get_pos()
+                #self.log.debug("Logic get from hardware: " + str(pos_dict))
+                position = [pos_dict['x'], pos_dict['y'], pos_dict['z'], 0]
+                return position
+            except KeyError as ker:
+                self.log.error("Logic Interfuse can't get stage position from hardware module, twice. Check device connection!")
+                pass
