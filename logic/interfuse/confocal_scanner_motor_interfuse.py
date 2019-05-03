@@ -55,6 +55,11 @@ class ScannerMotorInterfuse(Base, ConfocalScannerInterface):
         connect:
             counterlogic: 'counter'
             stage1: 'piezo_stage_nanos' #TODO: This need actual hardware.
+        scanner_position_ranges:
+            - [0e-6, 300e-6]
+            - [0e-6, 300e-6]
+            - [150e-6, 160e-6] #FIXME：this is affective
+            - [-10.0, 10.0]  # defual axix: a = 0.0
 
     scanner:
         module.Class: 'confocal_logic.ConfocalLogic'
