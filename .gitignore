@@ -35,3 +35,6 @@
 
 # vscode
 /.vscode/*.json
+
+#merge temp files
+*.orig
