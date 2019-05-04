@@ -12,6 +12,7 @@ new POIs will be named after this tag together with a consecutive integer index.
 * If using the POI manager, the currently selected active POI name will be added to savelogic as 
 global parameter. All saved data files will include this POI name in the header.
 * bug fix to how the flags are set for AWG70k
+* 
 * Replaced the old `pg.PlotWidget` subclass `PlotWidgetModified` with new subclasses 
 `ScanPlotWidget`, `ScanViewBox` (`pg.ViewBox`) and `ScanImageItem` (`pg.ImageItem`) to handle 
 coordinate transformations upon mouse click/drag and zooming internally. Also integrates the 
@@ -24,10 +25,15 @@ Purely for displaying purposes; raw data is not affected by this filter.
 * while sampling a sequence, the ensembles are only sampled if they weren't already sampled before
 * Add `natural_sort` utility function to `core.util.helpers`
 * 
+* New POI automatic search tool added. If you click on the 'Auto POIs' tool button, POIs will be 
+automatically added in your scan image. This makes fluorescent emitter selections much faster and
+more accurately.
+* Add 'motor/piezo_stage_pi_py_gcs2.py to support PI XYZ Piezo GCS Devices, such as 'E-727','E-516'...
+* Add 'logic/interfuse/confocal_scanner_motor_interfuse.py' to support PI XYZ Piezo Stage do dwell-time confocal scan.
 
 Config changes:
 
-* 
+* Add Example Actual Hardware Config Test with 'NI USB 6343', 'PI E-727 PZT'...
 
 ## Release 0.10
 Released on 14 Mar 2019

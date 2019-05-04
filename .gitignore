@@ -32,3 +32,9 @@
 # log files
 *.log
 *.log.*
+
+# vscode
+/.vscode/*.json
+
+#merge temp files
+*.orig

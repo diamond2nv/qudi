@@ -342,7 +342,9 @@ class ConfocalLogic(GenericLogic):
         self.signal_start_scanning.connect(self.start_scanner, QtCore.Qt.QueuedConnection)
         self.signal_continue_scanning.connect(self.continue_scanner, QtCore.Qt.QueuedConnection)
 
-        self._change_position('activation')
+        #FIXME：When Confocal GUI started , confocal_logic init function(below) will first send stage move 
+        # to the middles of xyz range, it can be dangerous for the object lens (z axis)
+        #self._change_position('activation')
 
     def on_deactivate(self):
         """ Reverse steps of activation
