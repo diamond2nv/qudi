@@ -655,13 +655,16 @@ class SaveLogic(GenericLogic):
         if len(args) == 0:
             param_dict = kwargs
         elif len(args) == 1 and isinstance(args[0], dict):
-            param_dict = args[0].update(kwargs)
+            #param_dict = args[0].update(kwargs)
+            #FIXME
+            param_dict = args[0]
         else:
             raise TypeError('"update_additional_parameters" takes exactly 0 or 1 positional '
                             'argument of type dict.')
 
         for key in param_dict.keys():
             param_dict[key] = netobtain(param_dict[key])
+        self.log.debug("Logic Save module-update_additional_parameters: " + str(param_dict))
         self._additional_parameters.update(param_dict)
         return
 
