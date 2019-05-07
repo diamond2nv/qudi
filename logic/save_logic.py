@@ -658,6 +658,7 @@ class SaveLogic(GenericLogic):
             #param_dict = args[0].update(kwargs)
             #FIXME
             param_dict = args[0]
+            param_dict.update(kwargs)
         else:
             raise TypeError('"update_additional_parameters" takes exactly 0 or 1 positional '
                             'argument of type dict.')

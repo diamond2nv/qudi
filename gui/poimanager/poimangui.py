@@ -578,7 +578,9 @@ class PoiManagerGui(GUIBase):
         # In our case this is most likely the POI marker to select the active POI from.
         if not event.accepted:
             # Z position from ROI origin, X and Y positions from click event
+            #TODO: Z position from ROI origin is 0. roi_origin most meaning as origin_shift...
             new_pos = self.poimanagerlogic().roi_origin
+            new_pos[2] = self.poimanagerlogic().scanner_position[2]
             cursor_pos = self.roi_image.getViewBox().mapSceneToView(event.scenePos())
             new_pos[0] = cursor_pos.x()
             new_pos[1] = cursor_pos.y()

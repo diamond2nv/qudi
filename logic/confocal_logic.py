@@ -658,11 +658,24 @@ class ConfocalLogic(GenericLogic):
         """
         # Changes the respective value
         if x is not None:
-            self._current_x = x
+            if self.x_range[0] <= x <= self.x_range[1]:
+                self._current_x = x
+            else:
+                self.log.error("Confocal Scan logic can't move x-axis out of its range !")
+                return -1
         if y is not None:
-            self._current_y = y
+            if self.y_range[0] <= y <= self.y_range[1]:
+                self._current_y = y
+            else:
+                self.log.error("Confocal Scan logic can't move y-axis out of its range !")
+                return -1
+        #FIXME: special safe range ?
         if z is not None:
-            self._current_z = z
+            if self.z_range[0] <= z <= self.z_range[1]:
+                self._current_z = z
+            else:
+                self.log.error("Confocal Scan logic can't move z-axis out of its range !")
+                return -1
         if a is not None:
             self._current_a = a
 

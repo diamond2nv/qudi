@@ -39,6 +39,7 @@ class RegionOfInterest:
     e.g. the sample drift history and the corresponding confocal image.
     Each individual point of interest (POI) will be represented as a PointOfInterest instance.
     The origin af a new ROI is always defined as (0,0,0) initially.
+    TODO:roi_origin most meaning as origin_shift...
     Sample shifts will cause this origin to move to a different coordinate.
     The anchors of each individual POI is given relative to the initial ROI origin (even if added later).
     """
