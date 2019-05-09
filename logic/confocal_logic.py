@@ -260,8 +260,8 @@ class ConfocalLogic(GenericLogic):
     savelogic = Connector(interface='SaveLogic')
 
     # status vars
-    _clock_frequency = StatusVar('clock_frequency', 500)
-    return_slowness = StatusVar(default=50)
+    _clock_frequency = StatusVar('clock_frequency', 100)
+    return_slowness = StatusVar(default=2)
     max_history_length = StatusVar(default=10)
 
     # signals
@@ -812,13 +812,13 @@ class ConfocalLogic(GenericLogic):
             else:
                 if n_ch <= 3:
                     return_line = np.vstack([
-                            image[self._scan_counter, 0, 1] * np.ones(self._return_YL.shape),
+                            image[self._scan_counter, 0, 0] * np.ones(self._return_YL.shape),
                             self._return_YL,
                             image[self._scan_counter, 0, 2] * np.ones(self._return_YL.shape)
                         ][0:n_ch])
                 else:
                     return_line = np.vstack([
-                            image[self._scan_counter, 0, 1] * np.ones(self._return_YL.shape),
+                            image[self._scan_counter, 0, 0] * np.ones(self._return_YL.shape),
                             self._return_YL,
                             image[self._scan_counter, 0, 2] * np.ones(self._return_YL.shape),
                             np.ones(self._return_YL.shape) * self._current_a

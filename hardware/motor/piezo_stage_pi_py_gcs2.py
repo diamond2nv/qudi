@@ -246,7 +246,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
                             self._has_connect_piezo_controller = True
                         else:
                             self.log.error("NOT Found the PI Devices: {} by either USB or TCPIP: ".format(self._pi_controller_mask))
-                            raise
+                            raise ValueError("NOT Found the PI Devices.")
                     except:
                         pass
             except:
@@ -676,7 +676,8 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         self.log.info('Not yet implemented for this hardware')
 
     def calibrate(self, param_list=None):
-        """ Calibrate the stage.
+        """ Calibrate the stage. PI GCS ATZ() will move axes to their whole range, careful !
+        NOT recommend to do ATZ by this function, use PI Software instead.
 
         @param dict param_list : param_list: optional, if a specific calibration
                                  of an axis is desired, then the labels of the
@@ -687,7 +688,7 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
         After calibration the stage moves to home position which will be the
         zero point for the passed axis.
 
-        @return dict pos : dictionary with the current position of the ac#xis
+        @return dict pos : dictionary with the current position of the axis
         """
         
         param_dict = {}
@@ -696,12 +697,17 @@ class PiezoStagePI_PyGCS2(Base, MotorInterface):
             try:
                 self.abort()
                 pidevice.errcheck = True
-                pidevice.ATZ()
+                pidevice.ATZ(axes=[1,2])
                 #PI Piezo Auto To Zero Calibration, just do it after power shutdown.
-                time.sleep(1.0)
-                param_dict = pidevice.qATZ()
+                #PI GCS ATZ() will move axes to their whole range, Careful !
+                #TODO: NOT recommend to do ATZ by this function, use PI Software instead.
+                time.sleep(10.0)
                 #has ATZ(), also should has qATZ()
-                return param_dict
+                if pidevice.qATZ(axes=[1]) and pidevice.qATZ(axes=[2]):
+                    param_dict = self.get_pos([param_dict.keys()])
+                    return param_dict
+                else:
+                    raise ValueError("PI Auto To Zero Function not succeed !")
             except GCSError as exc:
                 self.log.error("PI GCSError(ATZ or qATZ): " + str(GCSError(exc)))
                 #raise GCSError(exc)
